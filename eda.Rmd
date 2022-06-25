@@ -10,4 +10,37 @@ knitr::opts_chunk$set(echo = TRUE, include = FALSE)
 
 library(tidyverse)
 library(bigrquery)
+library(DBI)
+library(lubridate)
 ```
+
+```{r}
+con <- dbConnect(bigquery(), project = "tonofshell-analyses")
+
+zillow_pricing_table <-  tbl(con, "tonofshell-analyses.housing_price_analysis.zillow_monthly_prices")
+
+date_col_names <- zillow_pricing_table %>% colnames() %>% .[str_detect(., "_20")]
+
+zillow_price_data <- zillow_pricing_table %>%
+  collect() %>%
+  pivot_longer(any_of(date_col_names), names_to = "date", values_to = "price") %>%
+  mutate(date = date %>%
+           str_remove("^_") %>%
+           str_replace_all("_", "-") %>%
+           as_date())
+
+```
+
+```{r}
+zillow_price_data %>% 
+  filter(!is.na(price)) %>%
+  group_by(date) %>% 
+  summarise(min_price = min(price),
+            med_price = median(price),
+            max_price = max(price)) %>% 
+  ggplot(aes(x = date)) +
+  #geom_ribbon(aes(ymin = min_price, ymax = max_price), alpha = 0.5) +
+  geom_line(aes(y = med_price))
+```
+
+
