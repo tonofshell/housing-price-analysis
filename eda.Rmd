@@ -1,0 +1,13 @@
+---
+title: "Exploratory Data Analysis"
+author: "Adam Shelton"
+date: '2022-06-25'
+output: github_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, include = FALSE)
+
+library(tidyverse)
+library(bigrquery)
+```
