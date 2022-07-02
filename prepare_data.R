@@ -29,4 +29,8 @@ zillow_data <- read_csv(zillow_url) %>%
 message(paste0("Writing file to ", zillow_tmp_path, "..."))
 zillow_data %>% write_csv(zillow_tmp_path, na="")
 message("Writing file to GCS bucket...")
-gcs_upload(zillow_tmp_path, "housing-price-analysis", type = "simple")
+gcs_upload(zillow_tmp_path,
+           name = "zillow_data.csv",
+           type = "text/csv",
+           bucket = "housing-price-analysis",
+           predefinedAcl = "bucketLevel")
