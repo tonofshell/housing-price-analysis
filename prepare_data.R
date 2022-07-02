@@ -22,8 +22,11 @@ tmp_dir = tempdir()
 zillow_tmp_path <- file.path(tmp_dir, "zillow_data.csv")
 zillow_url <- paste0("https://files.zillowstatic.com/research/public_csvs/",
                      "zhvi/Zip_zhvi_uc_sfr_tier_0.33_0.67_sm_sa_month.csv")
+message("Downloading file...")
 zillow_data <- read_csv(zillow_url) %>%
   pivot_longer(starts_with("20"), names_to = "date", values_to = "price") %>% 
   clean_names()
-zillow_data %>% write_csv(zillow_tmp_path)
+message(paste0("Writing file to ", zillow_tmp_path, "..."))
+zillow_data %>% write_csv(zillow_tmp_path, na="")
+message("Writing file to GCS bucket...")
 gcs_upload(zillow_tmp_path, "housing-price-analysis", type = "simple")
