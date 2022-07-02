@@ -1,42 +1,140 @@
 ---
 title: "Exploratory Data Analysis"
 author: "Adam Shelton"
-date: '2022-06-25'
 output: github_document
 ---
 
 ```{r setup, include=FALSE}
-knitr::opts_chunk$set(echo = TRUE, include = FALSE)
-
 library(tidyverse)
 library(bigrquery)
 library(DBI)
 library(lubridate)
+library(sf)
+library(albersusa)
+
+bq_con <- dbConnect(bigquery(), project = "tonofshell-analyses")
+knitr::opts_chunk$set(echo = FALSE, warning = FALSE, message = FALSE,
+                      connection = "bq_con", dpi = 300)
 ```
 
-```{r}
-con <- dbConnect(bigquery(), project = "tonofshell-analyses")
-
-zillow_pricing_table <-  tbl(con, "tonofshell-analyses.housing_price_analysis.zillow_prices_by_zip")
-covid_mobilty_table <- tbl(con, "bigquery-public-data.covid19_google_mobility.mobility_report")
-zip_to_county_table <- tbl(con, "bigquery-public-data.hud_zipcode_crosswalk.zip_to_county")
-census_acs_2018_table <- tbl(con, "bigquery-public-data.census_bureau_acs.zip_codes_2018_5yr")
+```{r bq-table-names, eval=FALSE, include=FALSE}
+zillow_pricing_table <-  paste("tonofshell-analyses",
+                               "housing_price_analysis",
+                               "zillow_prices_by_zip",
+                               sep = ".")
+covid_mobilty_table <- paste("bigquery-public-data",
+                             "covid19_google_mobility",
+                             "mobility_report",
+                             sep = ".")
+zip_to_county_table <- paste("bigquery-public-data",
+                             "hud_zipcode_crosswalk",
+                             "zip_to_county",
+                             sep = ".")
+census_acs_2018_table <- paste("bigquery-public-data",
+                               "census_bureau_acs",
+                               "zip_codes_2018_5yr")
 ```
 
-```{r}
-zillow_pricing_table %>% 
-  group_by(date, state) %>% 
-  summarise(min_price = min(price, na.rm = TRUE),
-            med_price = quantile(price, 0.5, na.rm = TRUE),
-            max_price = max(price, na.rm = TRUE)) %>% 
-  collect() %>% 
+```{r retreive-shapefiles}
+read_remote <- function(url, read_func, ..., regex_filter = ".*") {
+  temp_path <- file.path(tempdir(), basename(url))
+  download.file(url, temp_path)
+  if (str_detect(temp_path, "\\.zip$")) {
+    unzipped_dir <- paste0(str_remove(temp_path, "\\.zip$"), "/")
+    utils::unzip(temp_path, exdir = unzipped_dir)
+    unzipped_file_paths <- list.files(unzipped_dir,
+                                      pattern = regex_filter,
+                                      full.names = TRUE,
+                                      recursive = TRUE)
+    if (length(unzipped_file_paths) > 1) {
+      read_file_list = sapply(unzipped_file_paths, read_func, ...)
+      return(read_file_list)
+    }
+    return(read_func(unzipped_file_paths, ...))
+  }
+  read_func(temp_path, ...)
+}
+
+us_states_geoms <- read_remote("https://www2.census.gov/geo/tiger/GENZ2018/shp/cb_2018_us_state_500k.zip", read_sf, regex_filter = "\\.shp$")
+```
+
+
+```{sql, output.var="zillow_agg_date_state"}
+WITH
+  medians AS (SELECT date,
+      state,
+      PERCENTILE_DISC(price, 0.5) OVER (PARTITION BY date,state) AS med_price,
+    FROM `tonofshell-analyses.housing_price_analysis.zillow_prices_by_zip`),
+  extremes AS (
+    SELECT date,
+      state,
+      MIN(price) AS min_price,
+      MAX(price) AS max_price
+    FROM `tonofshell-analyses.housing_price_analysis.zillow_prices_by_zip`
+    GROUP BY date, state)
+SELECT date, state, min_price, med_price, max_price
+FROM (SELECT DISTINCT * FROM medians) FULL JOIN extremes USING(date, state) 
+ORDER BY date, state;
+```
+
+```{r ggplot-themes}
+no_legend <- theme(legend.position = "none")
+
+map_theme <- theme(axis.title = element_blank(),
+                   axis.text = element_blank(),
+                   panel.background = element_blank(),
+                   panel.grid = element_blank(),
+                   axis.ticks = element_blank())
+```
+
+```{r prices-by-state}
+zillow_agg_date_state_long <- zillow_agg_date_state %>% 
+  pivot_longer(ends_with("price"), names_to = "type", values_to = "price")
+zillow_agg_date_state_long %>% 
   ggplot(aes(x = date, color = state)) +
-  geom_line(aes(y = med_price))
+    geom_line(aes(y = price)) +
+    facet_wrap(~ type, ncol = 1, scales = "free_y") +
+  no_legend
 ```
 
-```{r}
-zillow_price_data %>%
-  filter(!is.na(price)) %>%
-  group_by()
+```{r scaled-prices-by-state}
+zillow_agg_date_state_scaled <- zillow_agg_date_state_long %>% 
+  group_by(state, type) %>% 
+  summarise(price = (price/min(price, na.rm = TRUE)),
+            date = date)
+zillow_agg_date_state_scaled %>% 
+  ggplot(aes(x = date, color = state)) +
+    geom_line(aes(y = price)) +
+    facet_wrap(~ type, ncol = 1, scales = "free_y") +
+  no_legend
 ```
 
+```{r state-choropleth-long}
+zillow_state_scaled_sf <- us_states_geoms %>%
+  st_transform(us_laea_proj) %>%
+  points_elided_sf() %>%
+  rename("state" = STUSPS) %>% 
+  select(state, geometry) %>% 
+  right_join(zillow_agg_date_state_scaled)
+
+zillow_state_scaled_sf %>% 
+  filter(year(date) %% 3 == 0,
+         year(date) > 2004,
+         type == "med_price",
+         month(date) == 5) %>%
+ggplot(aes(color = price, fill = price)) +
+  geom_sf() +
+  facet_wrap(~ year(date)) +
+  map_theme
+```
+
+```{r state-choropleth-short}
+zillow_state_scaled_sf %>% 
+  filter(year(date) > 2016,
+         type == "med_price",
+         month(date) == 5) %>%
+ggplot(aes(color = price, fill = price)) +
+  geom_sf() +
+  facet_wrap(~ year(date)) +
+  map_theme
+```
