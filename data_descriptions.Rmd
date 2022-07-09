@@ -1,0 +1,51 @@
+---
+title: "Data Descriptions"
+author: "Adam Shelton"
+date: '2022-07-09'
+output: github_document
+---
+
+```{r setup, include=FALSE}
+library(tidyverse)
+library(bigrquery)
+library(DBI)
+library(lubridate)
+library(sf)
+library(albersusa)
+library(skimr)
+library(kableExtra)
+
+bq_con <- dbConnect(bigquery(), project = "tonofshell-analyses", page_size = 4000)
+knitr::opts_chunk$set(echo = FALSE, warning = FALSE, message = FALSE,
+                      connection = "bq_con", dpi = 300)
+```
+## Census Data
+
+```{sql, output.var="census_data_2018"}
+SELECT geo_id as zip_code,
+  * EXCEPT(geo_id, do_date)
+  FROM `bigquery-public-data.census_bureau_acs.zip_codes_2018_5yr`
+```
+### Overall Summary 
+
+```{r}
+skim_results <- census_data_2018 %>% skim() %>% partition()
+```
+
+
+```{r, results="asis"}
+skim_results %>%
+  lapply(as_tibble) %>% 
+  bind_rows() %>%
+  kable(format = "markdown")
+```
+
+### Variables with all missing
+
+```{r, results="asis"}
+skim_results %>%
+  lapply(as_tibble) %>% 
+  bind_rows() %>%
+  filter(complete_rate == 0) %>%
+  kable(format = "markdown")
+```
